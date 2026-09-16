@@ -19,6 +19,8 @@ const envSchema = z.object({
   WKB2API_ACCOUNT_STORE_KEY_FILE: z.string().min(1),
   /** Local WorkBuddy credential file used only by the admin import endpoint. */
   WKB2API_CREDENTIALS_PATH: z.string().optional(),
+  /** JSONL path for raw tool-call frame tracing. Empty string disables it. */
+  WKB2API_TOOL_TRACE_PATH: z.string().default('data/tool-calls.jsonl'),
   WKB2API_MODEL_ALIASES: z.string().default('{}').transform((raw, ctx) => {
     try {
       const aliases = z.record(z.string().min(1)).parse(JSON.parse(raw));
@@ -43,6 +45,7 @@ export type AppConfig = {
   accountStoreKeyFile: string;
   credentialsPath: string;
   modelAliases: Record<string, string>;
+  toolTracePath: string;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -66,5 +69,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     accountStoreKeyFile: parsed.data.WKB2API_ACCOUNT_STORE_KEY_FILE,
     credentialsPath: parsed.data.WKB2API_CREDENTIALS_PATH ?? 'workbuddy-desktop-ai.info',
     modelAliases: parsed.data.WKB2API_MODEL_ALIASES,
+    toolTracePath: parsed.data.WKB2API_TOOL_TRACE_PATH,
   };
 }

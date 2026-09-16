@@ -2,11 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { parseProductConfig, buildCatalog, ConfigParseError } from '../src/workbuddy/model-catalog.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { loadCatalogFixture } from './helpers/catalog-fixture.js';
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
-const live = JSON.parse(
-  readFileSync(`${projectRoot}/wb_v3config_live.json`, 'utf8'),
-);
+const live = loadCatalogFixture();
 
 describe('parseProductConfig with live snapshot', () => {
   it('parses the real snapshot', () => {

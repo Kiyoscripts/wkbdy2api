@@ -16,11 +16,11 @@ export type OpenAiUsage = {
   total_tokens: number;
 };
 
-export type OpenAiToolCall = {
-  id: string;
-  type: 'function';
-  function: { name: string; arguments: string };
-  index?: number;
+export type OpenAiToolCallDelta = {
+  index: number;
+  id?: string;
+  type?: 'function';
+  function?: { name?: string; arguments?: string };
 };
 
 /** Streaming: convert one upstream chunk into one OpenAI chunk delta. */
@@ -87,24 +87,27 @@ function deltaFrom(chunk: UpstreamChunk): Record<string, unknown> | null {
 /** Normalize upstream tool_call frame entries; drop empty shells. */
 function openAiToolCallDeltas(
   raw: UpstreamChunk['delta']['tool_calls'],
-): OpenAiToolCall[] {
+): OpenAiToolCallDelta[] {
   if (!raw || raw.length === 0) return [];
-  const out: OpenAiToolCall[] = [];
+  const out: OpenAiToolCallDelta[] = [];
   for (const tc of raw) {
+    const index = typeof tc.index === 'number' ? tc.index : 0;
     const name = tc.function?.name ?? '';
     const args = tc.function?.arguments ?? '';
-    if (!name && !args && !tc.id) continue; // shell frame
-    const entry: OpenAiToolCall = {
-      id: tc.id ?? 'call_pending',
-      type: 'function',
-      function: { name, arguments: args },
-      index: typeof tc.index === 'number' ? tc.index : 0,
-    };
-    if (!tc.id) {
-      // continuation frame: only index + function.arguments
-      out.push({ id: 'call_pending', type: 'function', function: { name: '', arguments: args }, index: entry.index });
+    if (!tc.id && !name && !args) continue; // upstream shell frame
+
+    // OpenAI streaming semantics: metadata is emitted once, while later
+    // frames contain only the same index and argument deltas. Never invent a
+    // second ID or append a fallback "{}" value.
+    if (tc.id) {
+      out.push({
+        index,
+        id: tc.id,
+        type: 'function',
+        function: { name, arguments: args },
+      });
     } else {
-      out.push(entry);
+      out.push({ index, function: { arguments: args } });
     }
   }
   return out;

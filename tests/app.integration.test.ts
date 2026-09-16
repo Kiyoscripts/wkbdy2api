@@ -6,14 +6,13 @@ import { fileURLToPath } from 'node:url';
 import { buildCatalog, parseProductConfig } from '../src/workbuddy/model-catalog.js';
 import { WorkBuddyClient, UpstreamHttpError } from '../src/workbuddy/client.js';
 import { createMetrics } from '../src/observability/metrics.js';
+import { loadCatalogFixture } from './helpers/catalog-fixture.js';
 
 const KEY = 'test-key-0123456789abcdef';
 const WRONG = 'wrong-key-00000000000000';
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
-const live = JSON.parse(
-  readFileSync(`${projectRoot}/wb_v3config_live.json`, 'utf8'),
-);
+const live = loadCatalogFixture();
 
 function mockClient(): WorkBuddyClient {
   return new WorkBuddyClient({

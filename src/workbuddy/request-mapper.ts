@@ -60,7 +60,8 @@ export const chatRequestSchema = z
       .array(
         z.object({
           role: z.enum(['system', 'developer', 'user', 'assistant', 'tool']),
-          content: z.union([z.string(), z.array(z.any())]).optional(),
+          // OpenAI represents assistant tool-call messages with null content.
+          content: z.union([z.string(), z.array(z.any()), z.null()]).optional(),
           name: z.string().optional(),
           tool_calls: z.array(z.any()).optional(),
           tool_call_id: z.string().optional(),
@@ -94,8 +95,15 @@ export const chatRequestSchema = z
     thinking: thinkingSchema.optional(),
     user: z.string().optional(),
     stream_options: z.object({ include_usage: z.boolean().optional() }).optional(),
+    // OpenAI-compatible clients may send this persistence hint. WorkBuddy
+    // does not support server-side response storage, so accept it for
+    // compatibility but intentionally do not forward it upstream.
+    store: z.boolean().optional(),
   })
-  .strict();
+  // Not .strict(): the route applies an accept-and-drop policy for unknown
+  // fields, and Zod strips unrecognized keys before that policy can report
+  // them. Semantic-changing fields are rejected explicitly in the route.
+  .passthrough();
 
 export type ChatRequest = z.infer<typeof chatRequestSchema>;
 

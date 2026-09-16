@@ -1,0 +1,23 @@
+data: {"id":"cmb-parallel-0001","model":"deepseek-v4.1-flash","object":"chat.completion.chunk","created":1789301200,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning_content":"","function_call":null,"refusal":"","tool_calls":[],"extra_fields":null},"logprobs":null,"finish_reason":""}],"usage":null}
+
+data: {"id":"cmb-parallel-0001","model":"deepseek-v4.1-flash","object":"chat.completion.chunk","created":1789301200,"choices":[{"index":0,"delta":{"content":"","reasoning_content":"","function_call":null,"refusal":"","tool_calls":[{"id":"call_00_parallelA","type":"function","function":{"name":"get_weather","arguments":"{"},"index":0},{"id":"call_01_parallelB","type":"function","function":{"name":"get_time","arguments":"{"},"index":1}],"extra_fields":null},"logprobs":null,"finish_reason":""}],"usage":null}
+
+data: {"id":"cmb-parallel-0001","model":"deepseek-v4.1-flash","object":"chat.completion.chunk","created":1789301200,"choices":[{"index":0,"delta":{"content":"","reasoning_content":"","function_call":null,"refusal":"","tool_calls":[{"function":{"name":"","arguments":"\"city\""},"index":0}],"extra_fields":null},"logprobs":null,"finish_reason":""}],"usage":null}
+
+data: {"id":"cmb-parallel-0001","model":"deepseek-v4.1-flash","object":"chat.completion.chunk","created":1789301200,"choices":[{"index":0,"delta":{"content":"","reasoning_content":"","function_call":null,"refusal":"","tool_calls":[{"function":{"name":"","arguments":"\"timezone\""},"index":1}],"extra_fields":null},"logprobs":null,"finish_reason":""}],"usage":null}
+
+data: {"id":"cmb-parallel-0001","model":"deepseek-v4.1-flash","object":"chat.completion.chunk","created":1789301200,"choices":[{"index":0,"delta":{"content":"","reasoning_content":"","function_call":null,"refusal":"","tool_calls":[{"function":{"name":"","arguments":":"},"index":0}],"extra_fields":null},"logprobs":null,"finish_reason":""}],"usage":null}
+
+data: {"id":"cmb-parallel-0001","model":"deepseek-v4.1-flash","object":"chat.completion.chunk","created":1789301200,"choices":[{"index":0,"delta":{"content":"","reasoning_content":"","function_call":null,"refusal":"","tool_calls":[{"function":{"name":"","arguments":":"},"index":1}],"extra_fields":null},"logprobs":null,"finish_reason":""}],"usage":null}
+
+data: {"id":"cmb-parallel-0001","model":"deepseek-v4.1-flash","object":"chat.completion.chunk","created":1789301200,"choices":[{"index":0,"delta":{"content":"","reasoning_content":"","function_call":null,"refusal":"","tool_calls":[{"function":{"name":"","arguments":"\"Tokyo\""},"index":0}],"extra_fields":null},"logprobs":null,"finish_reason":""}],"usage":null}
+
+data: {"id":"cmb-parallel-0001","model":"deepseek-v4.1-flash","object":"chat.completion.chunk","created":1789301200,"choices":[{"index":0,"delta":{"content":"","reasoning_content":"","function_call":null,"refusal":"","tool_calls":[{"function":{"name":"","arguments":"\"UTC\""},"index":1}],"extra_fields":null},"logprobs":null,"finish_reason":""}],"usage":null}
+
+data: {"id":"cmb-parallel-0001","model":"deepseek-v4.1-flash","object":"chat.completion.chunk","created":1789301200,"choices":[{"index":0,"delta":{"content":"","reasoning_content":"","function_call":null,"refusal":"","tool_calls":[{"function":{"name":"","arguments":"}"},"index":0}],"extra_fields":null},"logprobs":null,"finish_reason":""}],"usage":null}
+
+data: {"id":"cmb-parallel-0001","model":"deepseek-v4.1-flash","object":"chat.completion.chunk","created":1789301200,"choices":[{"index":0,"delta":{"content":"","reasoning_content":"","function_call":null,"refusal":"","tool_calls":[{"function":{"name":"","arguments":"}"},"index":1}],"extra_fields":null},"logprobs":null,"finish_reason":""}],"usage":null}
+
+data: {"id":"cmb-parallel-0001","model":"deepseek-v4.1-flash","object":"chat.completion.chunk","created":1789301200,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning_content":"","function_call":{"name":"","arguments":""},"refusal":"","tool_calls":[],"extra_fields":null},"logprobs":null,"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":300,"completion_tokens":60,"total_tokens":360}}
+
+data: [DONE]

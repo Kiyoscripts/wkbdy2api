@@ -12,6 +12,7 @@ import type { WorkBuddyClient } from './workbuddy/client.js';
 import type { CredentialPool } from './workbuddy/credential-pool.js';
 import type { MetricsCollector } from './observability/metrics.js';
 import { OAuthBroker, type OAuthBrokerOptions } from './workbuddy/oauth-broker.js';
+import { createToolCallTracer } from './observability/tool-trace.js';
 
 export type BuildAppOptions = {
   apiKey: string;
@@ -25,6 +26,9 @@ export type BuildAppOptions = {
   startedAt: number;
   version: string;
   modelAliases?: Record<string, string>;
+  toolTracePath?: string;
+  /** Override the reporting sink for accepted-but-dropped request fields. */
+  onDroppedFields?: (fields: string[], requestId: string) => void;
   oauthOptions?: Omit<OAuthBrokerOptions, 'onComplete' | 'userAgent'>;
 };
 
@@ -74,6 +78,19 @@ export function buildApp(opts: BuildAppOptions): FastifyInstance {
     models: opts.models,
     client: opts.client,
     metrics: opts.metrics,
+    tracer: createToolCallTracer(opts.toolTracePath ?? ''),
+    onDroppedFields:
+      opts.onDroppedFields ??
+      ((fields, requestId) => {
+        console.info(
+          JSON.stringify({
+            time: new Date().toISOString(),
+            msg: 'accepted and ignored unsupported request fields',
+            request_id: requestId,
+            dropped_fields: fields,
+          }),
+        );
+      }),
   });
   void app.register(messagesRoutes, { prefix: '/v1', models: opts.models, client: opts.client, metrics: opts.metrics, modelAliases: opts.modelAliases });
   void app.register(responsesRoutes, { prefix: '/v1', models: opts.models, client: opts.client, metrics: opts.metrics });

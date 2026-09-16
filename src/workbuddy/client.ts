@@ -112,6 +112,18 @@ export class WorkBuddyClient {
       res = await this.attempt(body, signal, credential);
     }
     if (res.status === 401 || res.status === 403) this.opts.credentials.reportFailure?.(credential.accessToken);
+
+    // WorkBuddy intermittently returns a gateway 502/503/504 before opening
+    // the SSE stream. One bounded retry absorbs those short outages. Never
+    // retry a 200 response: once a stream starts, replaying could duplicate a
+    // completion or tool call after partial output reached the caller.
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      await res.body?.cancel().catch(() => {});
+      if (signal.aborted) throw signal.reason;
+      await abortableDelay(500, signal);
+      res = await this.attempt(body, signal, credential);
+    }
+
     if (res.status !== 200 || !res.body) {
       const text = await res.text().catch(() => '');
       const parsed = safeJson(text);
@@ -266,6 +278,24 @@ function normalizeChunk(raw: unknown): UpstreamChunk {
         }
       : null,
   };
+}
+
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {

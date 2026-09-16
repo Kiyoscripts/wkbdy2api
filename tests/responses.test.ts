@@ -7,10 +7,11 @@ import { createMetrics } from '../src/observability/metrics.js';
 import { CredentialPool } from '../src/workbuddy/credential-pool.js';
 import { WorkBuddyClient } from '../src/workbuddy/client.js';
 import { buildCatalog, parseProductConfig } from '../src/workbuddy/model-catalog.js';
+import { loadCatalogFixture } from './helpers/catalog-fixture.js';
 
 const KEY = 'test-key-0123456789abcdef';
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
-const live = JSON.parse(readFileSync(`${projectRoot}/wb_v3config_live.json`, 'utf8'));
+const live = loadCatalogFixture();
 const streamFixture = readFileSync(`${projectRoot}/fixtures/upstream-stream.redacted.txt`, 'utf8');
 const toolFixture = readFileSync(`${projectRoot}/fixtures/upstream-tool-call.redacted.txt`, 'utf8');
 

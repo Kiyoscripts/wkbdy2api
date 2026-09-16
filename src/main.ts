@@ -63,6 +63,7 @@ async function main() {
     pool,
     credentialsPath: config.credentialsPath,
     modelAliases: config.modelAliases,
+    toolTracePath: config.toolTracePath,
     metrics,
     upstreamUrl: config.upstreamUrl,
     upstreamUa: config.upstreamUa,

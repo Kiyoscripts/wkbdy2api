@@ -5,18 +5,22 @@ import { CompletionAggregator, toOpenAiChunk, localCompletionId } from '../opena
 import { openAiError, type ApiErrorCode } from '../openai/errors.js';
 import type { ExposedModel } from '../workbuddy/model-catalog.js';
 import type { MetricsCollector } from '../observability/metrics.js';
+import { createToolCallTracer } from '../observability/tool-trace.js';
 
-/** Fields that would silently change semantics if dropped; reject instead. */
+/**
+ * Fields that would silently change semantics if accepted-and-dropped: a client
+ * asking for JSON mode, a deterministic seed, or top_logprobs would get a
+ * plausible-looking but wrong answer. Reject these loudly.
+ *
+ * Everything else is accepted and ignored (see IGNORED_IF_UNKNOWN below), so a
+ * new SDK version adding a harmless field no longer breaks callers with a 400.
+ */
 const REJECTED_UNSUPPORTED = new Set([
   'logprobs',
   'top_logprobs',
   'response_format',
   'seed',
-  'presence_penalty',
-  'frequency_penalty',
   'n',
-  'store',
-  'metadata',
   'logit_bias',
   'functions',
   'function_call',
@@ -24,14 +28,36 @@ const REJECTED_UNSUPPORTED = new Set([
   'modalities',
   'prediction',
   'web_search_options',
-  'service_tier',
-  'speed',
 ]);
+
+/**
+ * Known-harmless OpenAI fields the gateway accepts but does not forward.
+ * Newer SDKs send these routinely; rejecting them caused recurring 400s.
+ */
+const ACCEPTED_IGNORED = new Set([
+  'presence_penalty',
+  'frequency_penalty',
+  'metadata',
+  'service_tier',
+  'serviceTier',
+  'speed',
+  'verbosity',
+  'safety_identifier',
+  'prompt_cache_key',
+  'user',
+  'store',
+]);
+
+/** Structural keys handled elsewhere; never reported as unknown. */
+const STRUCTURAL_KEYS = new Set(['model', 'messages', 'stream', 'max_tokens', 'max_completion_tokens', 'temperature', 'top_p', 'stop', 'tools', 'tool_choice', 'parallel_tool_calls', 'thinking', 'reasoning_effort', 'stream_options']);
 
 interface ChatOpts {
   models: ExposedModel[];
   client: WorkBuddyClient;
   metrics: MetricsCollector;
+  tracer?: ReturnType<typeof createToolCallTracer>;
+  /** Sink for accepted-but-dropped field names. Defaults to a no-op. */
+  onDroppedFields?: (fields: string[], requestId: string) => void;
 }
 
 export function chatCompletionsRoutes(app: FastifyInstance, opts: ChatOpts): void {
@@ -63,6 +89,20 @@ export function chatCompletionsRoutes(app: FastifyInstance, opts: ChatOpts): voi
         const err = openAiError(400, 'unsupported_parameter', `Parameter '${key}' is not supported by this gateway.`, key);
         record({ status: 400, error_code: err.body.error.code });
         return reply.code(err.statusCode).send(err.body);
+      }
+    }
+    // Accept-and-drop policy: unknown or ignored-but-harmless fields are removed
+    // instead of rejected. Logging the names keeps the information available
+    // without forcing every caller to guess which fields this gateway knows.
+    const dropped = Object.keys(body).filter(
+      (k) => !STRUCTURAL_KEYS.has(k) && !ACCEPTED_IGNORED.has(k),
+    );
+    if (dropped.length > 0) {
+      opts.onDroppedFields?.(dropped, req.id);
+      for (const key of dropped) delete body[key];
+    } else {
+      for (const key of ACCEPTED_IGNORED) {
+        if (key in body) delete body[key];
       }
     }
     if (body.max_tokens !== undefined && body.max_completion_tokens !== undefined) {
@@ -109,8 +149,12 @@ export function chatCompletionsRoutes(app: FastifyInstance, opts: ChatOpts): voi
       try {
         const stream = await opts.client.streamChatCompletion(upstreamBody, abort.signal);
         const agg = new CompletionAggregator();
-        for await (const chunk of stream) agg.push(chunk);
+        for await (const chunk of stream) {
+          opts.tracer?.upstream(req.id, chunk);
+          agg.push(chunk);
+        }
         const built = agg.build(request.model);
+        opts.tracer?.aggregate(req.id, built.choices[0]?.message?.tool_calls);
         record({
           status: 200,
           prompt_tokens: built.usage?.prompt_tokens,
@@ -144,6 +188,7 @@ export function chatCompletionsRoutes(app: FastifyInstance, opts: ChatOpts): voi
       const includeUsage = request.stream_options?.include_usage === true;
       let pendingUsage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null = null;
       for await (const chunk of stream) {
+        opts.tracer?.upstream(req.id, chunk);
         // The usage-bearing frame is the finish frame; always forward its
         // finish_reason/delta, but hold the usage block for the optional chunk.
         if (chunk.usage) {
@@ -157,11 +202,17 @@ export function chatCompletionsRoutes(app: FastifyInstance, opts: ChatOpts): voi
           recordStream(200, pendingUsage ?? undefined);
           const usageOnlyChunk: typeof chunk = { ...chunk, usage: null };
           const converted = toOpenAiChunk(usageOnlyChunk, meta);
-          if (converted) reply.raw.write(`data: ${JSON.stringify(converted)}\n\n`);
+          if (converted) {
+            opts.tracer?.downstream(req.id, converted.choices[0]?.delta?.tool_calls);
+            reply.raw.write(`data: ${JSON.stringify(converted)}\n\n`);
+          }
           continue;
         }
         const converted = toOpenAiChunk(chunk, meta);
-        if (converted) reply.raw.write(`data: ${JSON.stringify(converted)}\n\n`);
+        if (converted) {
+          opts.tracer?.downstream(req.id, converted.choices[0]?.delta?.tool_calls);
+          reply.raw.write(`data: ${JSON.stringify(converted)}\n\n`);
+        }
       }
       recordStream(200, pendingUsage ?? undefined);
       if (pendingUsage) {

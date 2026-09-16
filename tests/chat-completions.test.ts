@@ -7,16 +7,25 @@ import { buildCatalog, parseProductConfig } from '../src/workbuddy/model-catalog
 import { WorkBuddyClient } from '../src/workbuddy/client.js';
 import { createMetrics } from '../src/observability/metrics.js';
 import { CredentialPool } from '../src/workbuddy/credential-pool.js';
+import { loadCatalogFixture } from './helpers/catalog-fixture.js';
 
 const KEY = 'test-key-0123456789abcdef';
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
-const live = JSON.parse(readFileSync(`${projectRoot}/wb_v3config_live.json`, 'utf8'));
+const live = loadCatalogFixture();
 const streamFixture = readFileSync(`${projectRoot}/fixtures/upstream-stream.redacted.txt`, 'utf8');
 const toolFixture = readFileSync(`${projectRoot}/fixtures/upstream-tool-call.redacted.txt`, 'utf8');
+const parallelToolFixture = readFileSync(`${projectRoot}/fixtures/upstream-parallel-tool-calls.redacted.txt`, 'utf8');
 
 /** Mock upstream: serves the fixture text as an SSE byte stream. Records the request. */
 let lastUpstreamRequest: { url: string; headers: Record<string, string>; body: unknown } | undefined;
+
+/** Read the most recent upstream body, or throw a clear error if absent. */
+function getLastUpstreamBody(): Record<string, unknown> {
+  const req = lastUpstreamRequest;
+  if (!req) throw new Error('no upstream request was captured');
+  return req.body as Record<string, unknown>;
+}
 
 function fixtureClient(fixture: string): WorkBuddyClient {
   return new WorkBuddyClient({
@@ -59,7 +68,10 @@ function sseStream(text: string): ReadableStream<Uint8Array> {
   });
 }
 
-function build(client: WorkBuddyClient): FastifyInstance {
+function build(
+  client: WorkBuddyClient,
+  onDroppedFields?: (fields: string[]) => void,
+): FastifyInstance {
   return buildApp({
     apiKey: KEY,
     models: buildCatalog(parseProductConfig(live)),
@@ -70,6 +82,7 @@ function build(client: WorkBuddyClient): FastifyInstance {
     upstreamUa: 'WorkBuddy/2.137.1',
     startedAt: Date.now(),
     version: 'test',
+    onDroppedFields,
   });
 }
 
@@ -248,12 +261,91 @@ describe('chat completions against fixture-driven mock upstream', () => {
       expect(first.type).toBe('function');
       expect(first.function.name).toBe('get_weather');
       // continuation frames append arguments (fixture spells it {"city": "Tokyo"})
-      const args = toolFrames
-        .map((f) => f.choices[0].delta.tool_calls.map((tc: { function: { arguments: string } }) => tc.function.arguments).join(''))
-        .join('');
-      expect(JSON.parse(args)).toEqual({ city: 'Tokyo' });
+      const calls = new Map<number, { id?: string; args: string }>();
+      for (const frame of toolFrames) {
+        for (const tc of frame.choices[0].delta.tool_calls) {
+          const current = calls.get(tc.index) ?? { args: '' };
+          if (tc.id) current.id = tc.id;
+          current.args += tc.function.arguments ?? '';
+          expect(tc.id).not.toBe('call_pending');
+          calls.set(tc.index, current);
+        }
+      }
+      expect(calls.size).toBe(1);
+      expect(calls.get(0)?.id).toMatch(/^call_/);
+      expect(JSON.parse(calls.get(0)?.args ?? '')).toEqual({ city: 'Tokyo' });
       const last = frames[frames.length - 1];
       expect(last.choices[0].finish_reason).toBe('tool_calls');
+    });
+
+    it('keeps parallel tool calls separate and correctly indexed (stream)', async () => {
+      const app = build(fixtureClient(parallelToolFixture));
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/chat/completions',
+        headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
+        payload: {
+          model: 'deepseek-v4.1-flash',
+          messages: [{ role: 'user', content: 'weather and time?' }],
+          stream: true,
+          tools: [
+            { type: 'function', function: { name: 'get_weather', parameters: { type: 'object' } } },
+            { type: 'function', function: { name: 'get_time', parameters: { type: 'object' } } },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const frames = res.body
+        .split('\n\n')
+        .map((l) => l.replace(/^data: /, ''))
+        .filter((l) => l && l !== '[DONE]')
+        .map((l) => JSON.parse(l));
+
+      const calls = new Map<number, { id?: string; name?: string; args: string }>();
+      for (const frame of frames) {
+        for (const tc of frame.choices[0]?.delta?.tool_calls ?? []) {
+          const current = calls.get(tc.index) ?? { args: '' };
+          if (tc.id) current.id = tc.id;
+          if (tc.function?.name) current.name = tc.function.name;
+          current.args += tc.function?.arguments ?? '';
+          calls.set(tc.index, current);
+        }
+      }
+
+      // Two distinct calls must survive as two entries, not merge into one.
+      expect(calls.size).toBe(2);
+      expect(calls.get(0)?.id).toBe('call_00_parallelA');
+      expect(calls.get(1)?.id).toBe('call_01_parallelB');
+      expect(calls.get(0)?.name).toBe('get_weather');
+      expect(calls.get(1)?.name).toBe('get_time');
+      // Interleaved argument fragments must land on the right index.
+      expect(JSON.parse(calls.get(0)?.args ?? '')).toEqual({ city: 'Tokyo' });
+      expect(JSON.parse(calls.get(1)?.args ?? '')).toEqual({ timezone: 'UTC' });
+    });
+
+    it('keeps parallel tool calls separate in aggregated non-stream output', async () => {
+      const app = build(fixtureClient(parallelToolFixture));
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/chat/completions',
+        headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
+        payload: {
+          model: 'deepseek-v4.1-flash',
+          messages: [{ role: 'user', content: 'weather and time?' }],
+          stream: false,
+          tools: [
+            { type: 'function', function: { name: 'get_weather', parameters: { type: 'object' } } },
+            { type: 'function', function: { name: 'get_time', parameters: { type: 'object' } } },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      const calls = body.choices[0].message.tool_calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toMatchObject({ id: 'call_00_parallelA', function: { name: 'get_weather', arguments: '{"city":"Tokyo"}' } });
+      expect(calls[1]).toMatchObject({ id: 'call_01_parallelB', function: { name: 'get_time', arguments: '{"timezone":"UTC"}' } });
+      expect(body.choices[0].finish_reason).toBe('tool_calls');
     });
 
     it('emits a usage chunk when stream_options.include_usage is set', async () => {
@@ -324,6 +416,114 @@ describe('chat completions against fixture-driven mock upstream', () => {
       });
       expect(res.statusCode).toBe(400);
       expect(res.json().error.code).toBe('unsupported_parameter');
+    });
+
+    it('accepts and ignores the OpenAI store compatibility hint', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/chat/completions',
+        headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
+        payload: { model: 'default-model', messages: [{ role: 'user', content: 'x' }], store: false },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().object).toBe('chat.completion');
+    });
+
+    it('accepts unknown fields instead of rejecting the request', async () => {
+      // Regression guard for the recurring 400s: a newer SDK adding a field
+      // must not break the caller.
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/chat/completions',
+        headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
+        payload: {
+          model: 'default-model',
+          messages: [{ role: 'user', content: 'x' }],
+          brand_new_field_from_future_sdk: { anything: true },
+          another_unknown: 'value',
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().object).toBe('chat.completion');
+    });
+
+    it('accepts and ignores known-harmless fields like penalties and metadata', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/chat/completions',
+        headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
+        payload: {
+          model: 'default-model',
+          messages: [{ role: 'user', content: 'x' }],
+          presence_penalty: 0.5,
+          frequency_penalty: 0.5,
+          metadata: { trace: 'abc' },
+          service_tier: 'auto',
+          user: 'user-123',
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().object).toBe('chat.completion');
+    });
+
+    it('strips ignored fields before they reach upstream', async () => {
+      const localApp = build(fixtureClient(streamFixture));
+      const res = await localApp.inject({
+        method: 'POST',
+        url: '/v1/chat/completions',
+        headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
+        payload: {
+          model: 'default-model',
+          messages: [{ role: 'user', content: 'sensitive-token-xyz' }],
+          metadata: { secret: 'sensitive-token-xyz' },
+          unknown_future_field: 'sensitive-token-xyz',
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const sent = getLastUpstreamBody();
+      // Dropped fields must not be forwarded to the upstream provider.
+      expect(sent).not.toHaveProperty('metadata');
+      expect(sent).not.toHaveProperty('unknown_future_field');
+    });
+
+    it('reports the names of dropped fields for observability', async () => {
+      const seen: string[][] = [];
+      const localApp = build(fixtureClient(streamFixture), (f: string[]) => seen.push(f));
+      const res = await localApp.inject({
+        method: 'POST',
+        url: '/v1/chat/completions',
+        headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
+        payload: {
+          model: 'default-model',
+          messages: [{ role: 'user', content: 'x' }],
+          unknown_future_field: 1,
+          another_unknown: 'y',
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(seen).toHaveLength(1);
+      expect(seen[0]?.sort()).toEqual(['another_unknown', 'unknown_future_field']);
+    });
+
+    it('accepts null content in assistant tool-call history', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/chat/completions',
+        headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
+        payload: {
+          model: 'default-model',
+          messages: [
+            { role: 'user', content: 'Use the tool.' },
+            {
+              role: 'assistant',
+              content: null,
+              tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'lookup', arguments: '{}' } }],
+            },
+            { role: 'tool', tool_call_id: 'call_1', content: 'done' },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(200);
     });
 
     it('rejects empty messages', async () => {
