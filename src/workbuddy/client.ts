@@ -100,6 +100,22 @@ export class WorkBuddyClient {
   ): Promise<StreamResult> {
     let credential = await this.opts.credentials.getCredential();
     let res = await this.attempt(body, signal, credential);
+
+    // Cloudflare/edge challenges can return an HTML 401/403 page. That is not
+    // evidence that the WorkBuddy token or selected model is unauthorized.
+    // Retry once with the same credential; if HTML persists, surface it as a
+    // transient upstream gateway failure and never quarantine the account.
+    if ((res.status === 401 || res.status === 403) && isHtmlResponse(res)) {
+      await res.body?.cancel().catch(() => {});
+      if (signal.aborted) throw signal.reason;
+      await abortableDelay(500, signal);
+      res = await this.attempt(body, signal, credential);
+      if ((res.status === 401 || res.status === 403) && isHtmlResponse(res)) {
+        await res.body?.cancel().catch(() => {});
+        throw new UpstreamHttpError(502, 'html_edge_response', 'Upstream returned an HTML authentication or edge page.');
+      }
+    }
+
     if (res.status === 401 && allowAuthRetry) {
       await res.body?.cancel().catch(() => {});
       if (this.opts.credentials.refreshRejectedCredential) {
@@ -278,6 +294,11 @@ function normalizeChunk(raw: unknown): UpstreamChunk {
         }
       : null,
   };
+}
+
+function isHtmlResponse(res: Response): boolean {
+  const type = res.headers.get('content-type')?.toLowerCase() ?? '';
+  return type.includes('text/html') || type.includes('application/xhtml+xml');
 }
 
 function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {

@@ -46,8 +46,12 @@ export function buildApp(opts: BuildAppOptions): FastifyInstance {
     const header = req.headers.authorization;
     const bearer = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
     const apiKey = req.headers['x-api-key'];
-    const provided = isMessages && typeof apiKey === 'string' ? apiKey : bearer;
-    const conflicting = isMessages && apiKey !== undefined && header !== undefined && apiKey !== bearer;
+    // OpenAI-compatible harnesses are inconsistent across normal and tool
+    // continuation turns: some switch from Authorization: Bearer to x-api-key.
+    // Accept either header on every /v1 route, but reject conflicting values.
+    const keyHeader = typeof apiKey === 'string' ? apiKey : undefined;
+    const provided = bearer ?? keyHeader;
+    const conflicting = bearer !== undefined && keyHeader !== undefined && bearer !== keyHeader;
     if (conflicting || !isApiKeyValid(provided, opts.apiKey)) {
       if (isMessages) return reply.code(401).send(anthropicError(401, 'Invalid or missing gateway API key.', req.id));
       return reply.code(401).send(openAiError(401, 'invalid_api_key', 'Invalid or missing API key.').body);

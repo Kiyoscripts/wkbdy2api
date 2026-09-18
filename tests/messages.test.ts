@@ -80,11 +80,16 @@ describe('Messages protocol routes', () => {
     }
   });
 
-  it('leaves OpenAI Bearer-only auth unchanged', async () => {
+  it('accepts x-api-key on OpenAI routes and rejects conflicting headers', async () => {
     const { app } = setup();
-    const result = await app.inject({ url: '/v1/models', headers: { 'x-api-key': KEY } });
-    expect(result.statusCode).toBe(401);
-    expect(result.json().error.code).toBe('invalid_api_key');
+    const xKey = await app.inject({ url: '/v1/models', headers: { 'x-api-key': KEY } });
+    expect(xKey.statusCode).toBe(200);
+    const conflict = await app.inject({
+      url: '/v1/models',
+      headers: { 'x-api-key': KEY, authorization: 'Bearer different' },
+    });
+    expect(conflict.statusCode).toBe(401);
+    expect(conflict.json().error.code).toBe('invalid_api_key');
   });
 
   it('requires explicit model aliases and reports the actual upstream model', async () => {
