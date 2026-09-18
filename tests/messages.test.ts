@@ -84,6 +84,12 @@ describe('Messages protocol routes', () => {
     const { app } = setup();
     const xKey = await app.inject({ url: '/v1/models', headers: { 'x-api-key': KEY } });
     expect(xKey.statusCode).toBe(200);
+    const azureKey = await app.inject({ url: '/v1/models', headers: { 'api-key': ` ${KEY} ` } });
+    expect(azureKey.statusCode).toBe(200);
+    const lowerBearer = await app.inject({ url: '/v1/models', headers: { authorization: `bearer   ${KEY}` } });
+    expect(lowerBearer.statusCode).toBe(200);
+    const matchingBoth = await app.inject({ url: '/v1/models', headers: { 'x-api-key': KEY, authorization: `Bearer ${KEY}` } });
+    expect(matchingBoth.statusCode).toBe(200);
     const conflict = await app.inject({
       url: '/v1/models',
       headers: { 'x-api-key': KEY, authorization: 'Bearer different' },

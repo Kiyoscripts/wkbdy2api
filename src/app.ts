@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { isApiKeyValid } from './security/downstream-auth.js';
+import { extractApiKey, isApiKeyValid } from './security/downstream-auth.js';
 import { openAiError, type ApiErrorCode } from './openai/errors.js';
 import { modelsRoutes } from './routes/models.js';
 import { chatCompletionsRoutes } from './routes/chat-completions.js';
@@ -43,18 +43,23 @@ export function buildApp(opts: BuildAppOptions): FastifyInstance {
     if (!req.url.startsWith('/v1/')) return;
     const path = req.url.split('?')[0]!;
     const isMessages = path === '/v1/messages' || path.startsWith('/v1/messages/');
-    const header = req.headers.authorization;
-    const bearer = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
-    const apiKey = req.headers['x-api-key'];
     // OpenAI-compatible harnesses are inconsistent across normal and tool
-    // continuation turns: some switch from Authorization: Bearer to x-api-key.
-    // Accept either header on every /v1 route, but reject conflicting values.
-    const keyHeader = typeof apiKey === 'string' ? apiKey : undefined;
-    const provided = bearer ?? keyHeader;
-    const conflicting = bearer !== undefined && keyHeader !== undefined && bearer !== keyHeader;
-    if (conflicting || !isApiKeyValid(provided, opts.apiKey)) {
+    // continuation turns. Accept Bearer, x-api-key, and api-key everywhere.
+    const auth = extractApiKey(req.headers);
+    if (auth.conflicting || !isApiKeyValid(auth.value, opts.apiKey)) {
+      // Header names and request ID are safe; never log the secret values.
+      console.warn(JSON.stringify({
+        time: new Date().toISOString(),
+        msg: 'downstream API key rejected',
+        request_id: req.id,
+        path,
+        reason: auth.conflicting ? 'conflicting_headers' : auth.value ? 'invalid_value' : 'missing',
+        credential_headers: auth.sources,
+      }));
+      reply.header('x-request-id', req.id);
       if (isMessages) return reply.code(401).send(anthropicError(401, 'Invalid or missing gateway API key.', req.id));
-      return reply.code(401).send(openAiError(401, 'invalid_api_key', 'Invalid or missing API key.').body);
+      const error = openAiError(401, 'invalid_api_key', 'Invalid or missing API key.');
+      return reply.code(401).send({ ...error.body, request_id: req.id });
     }
   });
 
